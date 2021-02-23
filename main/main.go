@@ -1,19 +1,27 @@
 package main
 
 import (
-	"dhsbpp/packing"
-	"dhsbpp/tenantsData"
-	"dhsbpp/tree"
+	"fmt"
+	"github.com/dati-mipt/dhsbpp/hierarchy"
+	"github.com/dati-mipt/dhsbpp/packing"
+	"github.com/dati-mipt/dhsbpp/tree"
 )
 
 func main() {
-	TD := tenantsData.NewTenantsData("tenantsData/sg_data.csv",
-		                             "tenantsData/sg_tpd.csv")
+	newHierarchy := hierarchy.NewHierarchy("datasets/sg_data.csv",
+		"datasets/sg_tpd.csv")
 
-	root, _ := tree.NewTree( &TD )
+	root, err := tree.NewTree(newHierarchy)
 
-	MAX, AF := 250.0,  0.6
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	const maxCapacity = 250.0
+	const allocationFactor = 0.6
+
 	bins := make([]*packing.Bin, 0)
-	packing.PreprocessTree( root, MAX, AF )
-	packing.HFFD( root, &bins, MAX, AF, 0.2)
+	packing.PreprocessTree(root, maxCapacity, allocationFactor)
+	packing.HierarchicalFirstFitDecreasing(root, &bins, maxCapacity, allocationFactor)
 }

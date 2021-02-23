@@ -1,7 +1,9 @@
 package tree
 
 import (
-	"dhsbpp/tenantsData"
+	"errors"
+	"fmt"
+	"github.com/dati-mipt/dhsbpp/hierarchy"
 )
 
 type Node struct {
@@ -11,26 +13,25 @@ type Node struct {
 	TreeSize float64
 }
 
-
-func  NewTree( TD *tenantsData.TenantsData ) ( *Node, bool ) {
-	root, nodeName := buildTree( TD.TenantToParent )
-
-	ok := validateTree( root, nodeName )
+func NewTree(hierarchy *hierarchy.Hierarchy) (*Node, error) {
+	root, nodeName := buildTree(hierarchy.TenantToParent)
+	ok := validateTree(root, nodeName)
 	if !ok {
-		return nil, false
+		return nil, errors.New("tree : tree is not valid")
 	}
 
-	SetInitialNodeSize( TD.Tpd, nodeName, 30 )
-	FindTreeSize( root )
-	
+	const initDays = 30
 
-	return root, true
+	SetInitialNodeSize(hierarchy.TasksPerDay, nodeName, initDays)
+	FindTreeSize(root)
+
+	return root, nil
 }
 
-func buildTree( tenantsToParent map[string]string ) ( *Node, map[string]*Node){
-	nodeName := make(map[string]*Node)
+func buildTree(tenantsToParent map[string]string) (*Node, map[string]*Node) {
+	var nodeName = make(map[string]*Node)
 	var root *Node
-
+	var i = 0
 	for key, value := range tenantsToParent {
 		childName, parentName := key, value
 
@@ -45,11 +46,12 @@ func buildTree( tenantsToParent map[string]string ) ( *Node, map[string]*Node){
 			nodeName[childName] = childNode
 		}
 
-		if childNode == parentNode { // root case
+		if childName == parentName { // root case
 			root = childNode
 		} else {
 			parentNode.Children = append(parentNode.Children, childNode)
 		}
+		i++
 	}
 
 	return root, nodeName
@@ -69,12 +71,14 @@ func validateTree(root *Node, nodeName map[string]*Node) bool {
 			allVisited = false
 		}
 	}
+	fmt.Println(acyclic, allVisited)
 
 	return acyclic && allVisited
 }
 
 func isAcyclicDFS(node *Node, visited map[*Node]bool) bool {
 	if visited[node] == true {
+		fmt.Println(node.Name)
 		return false
 	}
 
@@ -89,36 +93,32 @@ func isAcyclicDFS(node *Node, visited map[*Node]bool) bool {
 	return true
 }
 
-func SetInitialNodeSize( tpd []tenantsData.TasksPerDay,
-	                 nodeName map[string]*Node, nInitDays int ) {
+func SetInitialNodeSize(tasksPerDay []map[string]float64,
+	nodeName map[string]*Node, initDays int) {
 
-	nDays := 0
-	currDay := tpd[0].Day
-	for _, item := range tpd {
-		if item.Day != currDay {
-			currDay = item.Day
-			nDays++
-		}
-		if nDays >= nInitDays {
+	for i, dayChange := range tasksPerDay {
+		if i >= initDays {
 			break
 		}
 
-		node := nodeName[item.Tenant]
-		node.NodeSize += item.CreatedTasks
+		for name, tasks := range dayChange {
+			var node = nodeName[name]
+			node.NodeSize += tasks
+		}
 	}
 }
 
-func FindTreeSize( node *Node ) float64 {
+func FindTreeSize(node *Node) float64 {
 	node.TreeSize += node.NodeSize
 	for _, ch := range node.Children {
-		node.TreeSize += FindTreeSize( ch )
+		node.TreeSize += FindTreeSize(ch)
 	}
 
 	return node.TreeSize
 }
 
-func ( node *Node ) Separate() []*Node {
-	separate := make( []*Node, 0, len(node.Children) + 1)
+func (node *Node) Separate() []*Node {
+	separate := make([]*Node, 0, len(node.Children)+1)
 	for _, ch := range node.Children {
 		separate = append(separate, ch)
 	}
@@ -130,7 +130,7 @@ func ( node *Node ) Separate() []*Node {
 	return separate
 }
 
-func ( node *Node ) Unite( children []*Node ) {
+func (node *Node) Unite(children []*Node) {
 	node.Children = children
 
 	for _, ch := range node.Children {
