@@ -3,115 +3,117 @@ package vizualize
 import (
 	"fmt"
 	"github.com/dati-mipt/dhsbpp/packing"
-	"github.com/dati-mipt/dhsbpp/partitionTree"
+	"github.com/dati-mipt/dhsbpp/tree"
 	"os"
 	"sort"
 )
 
-type BinNode struct {
+type DotNode struct {
 	idx int
 
-	Children []*BinNode
-	Parent   *BinNode
+	Children []*DotNode
+	Parent   *DotNode
 
 	NumOfNodes int64
-	pRoot      *partitionTree.PartitionNode
-	pNodes     map[*partitionTree.PartitionNode]bool
+	pRoot      *tree.PartitionNode
+	pNodes     map[*tree.PartitionNode]bool
 }
 
-func NewTreeOfBins(bins []*packing.Bin) *BinNode {
-	var unconnectedBinNodes = make(map[*BinNode]bool)
+func NewDotTree(bins []*packing.Bin) *DotNode {
+	var unconnectedDotNodes = make(map[*DotNode]bool)
 	for idx := range bins {
 		var rootNodes = bins[idx].MakeRootNodesOfBin()
 
 		for rootNode := range rootNodes {
-			var pNodes = findPartitionNodes(rootNode, bins[idx].Tenants)
-			var binNode = BinNode{idx: bins[idx].Index, pRoot: rootNode, pNodes: pNodes}
-			unconnectedBinNodes[&binNode] = true
+			var pNodes = findPartitionNodesOfDotNode(bins[idx].PartNodes, rootNode)
+			var dotNode = DotNode{idx: bins[idx].Index, pRoot: rootNode, pNodes: pNodes}
+			unconnectedDotNodes[&dotNode] = true
 		}
 	}
 
-	var rootBinNode = connectBinNodes(unconnectedBinNodes)
-	//	var lilRootBinNode = reduceNumOfNodes(rootBinNode)
+	var rootDotNode = connectBinNodes(unconnectedDotNodes)
 
-	return rootBinNode
+	return rootDotNode
 }
 
-//func reduceNumOfNodes(bigBinNode *BinNode) *BinNode {
+func connectBinNodes(unconnectedDotNodes map[*DotNode]bool) *DotNode {
+	var rootDotNode *DotNode
 
-//}
-
-func connectBinNodes(unconnectedBinNodes map[*BinNode]bool) *BinNode {
-	var rootBinNode *BinNode
-
-	for binNode := range unconnectedBinNodes {
-		var parent = findParent(binNode, unconnectedBinNodes)
+	for dotNode := range unconnectedDotNodes {
+		var parent = findParent(dotNode, unconnectedDotNodes)
 
 		if parent != nil {
-			binNode.Parent = parent
-			parent.Children = append(parent.Children, binNode)
+			dotNode.Parent = parent
+			parent.Children = append(parent.Children, dotNode)
 		} else {
-			rootBinNode = binNode
+			rootDotNode = dotNode
 		}
 	}
 
-	return rootBinNode
+	return rootDotNode
 }
 
-func findParent(child *BinNode, binNodes map[*BinNode]bool) *BinNode {
-	for binNode := range binNodes {
-		if ok := binNode.pNodes[child.pRoot.Parent]; ok {
-			return binNode
+func findParent(child *DotNode, dotNodes map[*DotNode]bool) *DotNode {
+	for dotNode := range dotNodes {
+		if ok := dotNode.pNodes[child.pRoot.Parent]; ok {
+			return dotNode
 		}
 	}
 
 	return nil
 }
 
-func findPartitionNodes(pRoot *partitionTree.PartitionNode,
-	tenants map[*partitionTree.PartitionNode]bool) map[*partitionTree.PartitionNode]bool {
+func findPartitionNodesOfDotNode(allPartNodes map[*tree.PartitionNode]bool,
+	pRoot *tree.PartitionNode) map[*tree.PartitionNode]bool {
 
-	var pNodes = make(map[*partitionTree.PartitionNode]bool)
+	var pNodesOfDotNode = make(map[*tree.PartitionNode]bool)
 
-	pNodes = findPartitionNodesFunc(pRoot, tenants, pNodes)
+	findPartitionNodesOfDotNodeFunc(pRoot, allPartNodes, pNodesOfDotNode)
 
-	return pNodes
+	return pNodesOfDotNode
 }
 
-func findPartitionNodesFunc(pNode *partitionTree.PartitionNode, tenants map[*partitionTree.PartitionNode]bool,
-	pNodes map[*partitionTree.PartitionNode]bool) map[*partitionTree.PartitionNode]bool {
-	if ok, _ := tenants[pNode]; !ok {
-		return pNodes
+func findPartitionNodesOfDotNodeFunc(pNode *tree.PartitionNode, allPartNodes map[*tree.PartitionNode]bool,
+	pNodesOfDotNode map[*tree.PartitionNode]bool) {
+	if ok, _ := allPartNodes[pNode]; !ok {
+		return
 	}
 
-	pNodes[pNode] = true
+	pNodesOfDotNode[pNode] = true
 
 	for _, children := range pNode.Children {
-		pNodes = findPartitionNodesFunc(children, tenants, pNodes)
+		findPartitionNodesOfDotNodeFunc(children, allPartNodes, pNodesOfDotNode)
 	}
-
-	return pNodes
 }
 
-func DrawBinTreeDot(binTree *BinNode, dotFileName string) error {
-	file, err := os.Create(dotFileName)
-
+func DrawBinTreeDot(binTree *DotNode, dotFileName string) error {
+	var file, err = os.Create(dotFileName)
 	if err != nil {
 		return err
 	}
 
-	defer file.Close()
-
-	fmt.Fprintf(file,
+	_, err = fmt.Fprintf(file,
 		"digraph G                                                          \n"+
 			"{                                                                     \n"+
 			"  node[shape = \"box\", color=\"black\",fontsize=14,      	           \n"+
 			"  style=\"filled\"];                                                  \n"+
 			"  edge[color=\"black\",style=\"bold\"];\n")
 
-	drawNodeDot(binTree, file)
+	if err != nil {
+		return err
+	}
 
-	fmt.Fprintf(file, "}")
+	err = drawNodeDot(binTree, file)
+	if err != nil {
+		return err
+	}
+
+	if _, err = fmt.Fprintf(file, "}"); err != nil {
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -125,23 +127,33 @@ var m = map[int]string{
 	6: "black",
 }
 
-func drawNodeDot(binNode *BinNode, file *os.File) {
-	_, err := fmt.Fprintf(file, "  ptr%p[label=\"bin index = %v\nnumber of nodes = %v\nsize = %v\",fillcolor=\"%v\"];\n", binNode, binNode.idx,
-		len(binNode.pNodes), calculateSizeOfBinNode(binNode), m[binNode.idx])
+func drawNodeDot(binNode *DotNode, file *os.File) error {
+	var _, err = fmt.Fprintf(file, "  ptr%p[label=\""+
+		"bin index = %v\n"+
+		"number of nodes = %v\n"+
+		"size = %v\","+
+		"fillcolor=\"%v\"];\n", binNode, binNode.idx, len(binNode.pNodes),
+		calculateSizeOfBinNode(binNode), m[binNode.idx])
+
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
 
 	sort.Slice(binNode.Children, func(i, j int) bool {
 		return len(binNode.Children[i].pNodes) < len(binNode.Children[j].pNodes)
 	})
+
 	for _, child := range binNode.Children {
-		fmt.Fprintf(file, "  ptr%p->ptr%p;\n", binNode, child)
-		drawNodeDot(child, file)
+		if _, err = fmt.Fprintf(file, "  ptr%p->ptr%p;\n", binNode, child); err != nil {
+			return err
+		}
+		err = drawNodeDot(child, file)
 	}
+
+	return nil
 }
 
-func calculateSizeOfBinNode(binNode *BinNode) int64 {
+func calculateSizeOfBinNode(binNode *DotNode) int64 {
 	var size int64 = 0
 	for pNode := range binNode.pNodes {
 		size += pNode.NodeSize

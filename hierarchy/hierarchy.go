@@ -59,7 +59,7 @@ func readTasksPerDay(csvTpd string) []map[string]int64 {
 		if err != nil {
 			log.Fatal(err)
 		}
-		var tenantUuid, date = record[0], record[1]
+		var nodeName, date = record[0], record[1]
 		createdTasks, err := strconv.ParseInt(record[2], 10, 64)
 		if err != nil {
 			fmt.Println(err)
@@ -68,7 +68,7 @@ func readTasksPerDay(csvTpd string) []map[string]int64 {
 		if date != lastDate {
 			tasksPerDay = append(tasksPerDay, make(map[string]int64))
 		}
-		tasksPerDay[len(tasksPerDay)-1][tenantUuid] += createdTasks
+		tasksPerDay[len(tasksPerDay)-1][nodeName] += createdTasks
 
 		lastDate = date
 	}
