@@ -1,91 +1,201 @@
 package packing
 
 import (
-	"github.com/dati-mipt/dhsbpp/tree"
+	"github.com/dati-mipt/dhsbpp/partitionTree"
 	"sort"
 )
 
 type Bin struct {
-	Tenants           []*tree.Node
-	MaxCapacity       float64
-	AllocationFactor  float64
-	ReallocationDelta float64
+	Index             int
+	Tenants           map[*partitionTree.PartitionNode]bool
+	MaxCapacity       int64
+	AllocationFactor  int64 // in %s (0.6 -> 60)
+	ReallocationDelta int64
 
-	FreeSpace float64
-	Volume    float64
+	Size   int64
+	Volume int64
 }
 
-func NewBin(maxCapacity float64, allocationFactor float64) *Bin {
+func NewBin(idx int, maxCapacity int64, allocationFactor int64, reallocationDelta int64) *Bin {
 	var bin Bin
 
+	bin.Index = idx
+	bin.Tenants = make(map[*partitionTree.PartitionNode]bool)
 	bin.MaxCapacity = maxCapacity
 	bin.AllocationFactor = allocationFactor
+	bin.ReallocationDelta = reallocationDelta
 
-	bin.Volume = bin.AllocationFactor * bin.MaxCapacity
-	bin.FreeSpace = bin.Volume
+	bin.Volume = bin.MaxCapacity * allocationFactor / 100
+	bin.Size = 0
 
 	return &bin
 }
 
-func PreprocessTree(root *tree.Node, maxCapacity float64, allocationFactor float64) {
-	if root.NodeSize > maxCapacity*allocationFactor {
+func (bin *Bin) AddToBinSize(pNode *partitionTree.PartitionNode, tasks int64) {
+	pNode.AddToNodeSize(tasks)
 
-		rootChunk := tree.Node{Name: root.Name + "#", Children: root.Children,
-			NodeSize: root.NodeSize - maxCapacity*allocationFactor, TreeSize: root.TreeSize - maxCapacity*allocationFactor}
+	bin.Size += tasks
+}
 
-		root.NodeSize = maxCapacity * allocationFactor
-		root.Children = nil
-		root.Children = append(root.Children, &rootChunk)
-
+func (bin *Bin) MakeRootNodesOfBin() map[*partitionTree.PartitionNode]bool {
+	var tmpTenants = make(map[*partitionTree.PartitionNode]bool)
+	for node := range bin.Tenants {
+		tmpTenants[node] = true
 	}
 
-	for _, ch := range root.Children {
-		PreprocessTree(ch, maxCapacity, allocationFactor)
+	for node := range tmpTenants {
+		if _, ok := bin.Tenants[node.Parent]; ok {
+			delete(tmpTenants, node)
+		}
+	}
+
+	return tmpTenants
+}
+
+func PreprocessPartitionTree(pRoot *partitionTree.PartitionNode, maxCapacity int64, allocationFactor int64) {
+	var Volume = maxCapacity * allocationFactor / 100
+	if pRoot.NodeSize > Volume {
+
+		rootChunk := partitionTree.PartitionNode{Name: pRoot.Name + "#", Parent: pRoot, Children: pRoot.Children,
+			NodeSize: pRoot.NodeSize - Volume, SubTreeSize: pRoot.SubTreeSize - Volume}
+
+		pRoot.NodeSize = Volume
+		pRoot.Children = nil
+		pRoot.Children = append(pRoot.Children, &rootChunk)
+	}
+
+	for _, ch := range pRoot.Children {
+		PreprocessPartitionTree(ch, maxCapacity, allocationFactor)
 	}
 }
 
-func (bin *Bin) AddSubTree(root *tree.Node) {
-	bin.FreeSpace -= root.TreeSize
-	bin.AddNodes(root)
+func (bin *Bin) AddSubTree(pNode *partitionTree.PartitionNode) {
+	bin.Size += pNode.SubTreeSize
+	bin.addNodes(pNode)
 }
 
-func (bin *Bin) AddNodes(node *tree.Node) {
-	bin.Tenants = append(bin.Tenants, node)
+func (bin *Bin) addNodes(pNode *partitionTree.PartitionNode) {
+	bin.Tenants[pNode] = true
 
-	for _, ch := range node.Children {
-		bin.AddNodes(ch)
+	for _, child := range pNode.Children {
+		bin.addNodes(child)
 	}
 }
 
-func HierarchicalFirstFitDecreasing(root *tree.Node, bins *[]*Bin,
-	maxCapacity float64, allocationFactor float64) {
-	V := allocationFactor * maxCapacity
-	if root.TreeSize <= V {
+func (bin *Bin) freeBin() {
+	bin.Tenants = nil // garbage collector?
+	bin.Tenants = make(map[*partitionTree.PartitionNode]bool)
+	bin.Size = 0
+}
+
+func HierarchicalFirstFitDecreasing(pRoot *partitionTree.PartitionNode, bins *[]*Bin,
+	maxCapacity int64, allocationFactor int64, reallocationDelta int64) {
+	Volume := maxCapacity * allocationFactor / 100
+	if pRoot.SubTreeSize <= Volume {
 		isFit := false
 		for _, bin := range *bins {
-			if root.TreeSize <= bin.FreeSpace {
-				bin.AddSubTree(root)
+			if pRoot.SubTreeSize <= bin.Volume-bin.Size {
+				bin.AddSubTree(pRoot)
 				isFit = true
 				break
 			}
 		}
 
 		if !isFit {
-			bin := NewBin(maxCapacity, allocationFactor)
-			bin.AddSubTree(root)
+			bin := NewBin(len(*bins)+1, maxCapacity, allocationFactor, reallocationDelta)
+			bin.AddSubTree(pRoot)
 			*bins = append(*bins, bin)
 		}
 	} else {
-		children := root.Children
+		children := pRoot.Children
 
-		separate := root.Separate()
+		separate := pRoot.Separate()
 		sort.Slice(separate, func(i, j int) bool {
-			return separate[i].TreeSize > separate[j].TreeSize
+			return separate[i].SubTreeSize > separate[j].SubTreeSize
 		})
 
 		for _, node := range separate {
-			HierarchicalFirstFitDecreasing(node, bins, maxCapacity, allocationFactor)
+			HierarchicalFirstFitDecreasing(node, bins, maxCapacity, allocationFactor, reallocationDelta)
 		}
-		root.Unite(children)
+		pRoot.Unite(children)
 	}
+}
+
+func DynamicalHierarchicalFirstFitDecreasing(bins *[]*Bin, tasksPerDay []map[string]int64,
+	nameToPartNode map[string]*partitionTree.PartitionNode, initDays int,
+	maxCapacity int64, allocationFactor int64, reallocationDelta int64) { // global constants?
+
+	var loadedBin *Bin
+	for i := initDays; i < len(tasksPerDay) && loadedBin == nil; i++ {
+		updateSizeInOneTimeInterval(*bins, tasksPerDay[i], nameToPartNode, true)           //Add
+		updateSizeInOneTimeInterval(*bins, tasksPerDay[i-initDays], nameToPartNode, false) //Sub
+
+		loadedBin = findOverOrUnderloadedBin(*bins)
+	}
+
+	if loadedBin != nil {
+		var untiedChildren = untieChildNodesOfBinFromOtherBins(loadedBin)
+		var rootNodesOfBin = loadedBin.MakeRootNodesOfBin()
+		loadedBin.freeBin()
+
+		for rootNode := range rootNodesOfBin {
+			HierarchicalFirstFitDecreasing(rootNode, bins, maxCapacity, allocationFactor, reallocationDelta)
+		}
+
+		tieChildNodesToOtherBins(untiedChildren)
+	}
+}
+
+func untieChildNodesOfBinFromOtherBins(bin *Bin) map[*partitionTree.PartitionNode][]*partitionTree.PartitionNode {
+	var untiedChildren = make(map[*partitionTree.PartitionNode][]*partitionTree.PartitionNode)
+
+	for pNode := range bin.Tenants {
+		for _, child := range pNode.Children {
+			if ok := bin.Tenants[child]; !ok {
+				pNode.RemoveChild(child)
+				untiedChildren[pNode] = append(untiedChildren[pNode], child)
+			}
+		}
+	}
+
+	return untiedChildren
+}
+
+func tieChildNodesToOtherBins(untiedChildren map[*partitionTree.PartitionNode][]*partitionTree.PartitionNode) {
+	for pNode, children := range untiedChildren {
+		for _, child := range children {
+			pNode.AppendChild(child)
+		}
+	}
+}
+
+func updateSizeInOneTimeInterval(bins []*Bin, tasksPerOneDay map[string]int64,
+	nameToPartNode map[string]*partitionTree.PartitionNode, isPlus bool) {
+
+	for name, tasks := range tasksPerOneDay { //Add
+		var pNode = nameToPartNode[name]
+
+		if !isPlus {
+			tasks = -tasks
+		}
+
+		for _, bin := range bins {
+			if ok := bin.Tenants[pNode]; ok {
+				bin.AddToBinSize(pNode, tasks)
+				break
+			}
+		}
+	}
+}
+
+func findOverOrUnderloadedBin(bins []*Bin) *Bin {
+	for _, bin := range bins {
+		var overloadedThreshold = bin.MaxCapacity * (bin.AllocationFactor + bin.ReallocationDelta) / 100
+		var underloadedThreshold = bin.MaxCapacity * (bin.AllocationFactor - bin.ReallocationDelta) / 100
+		if (bin.Size >= overloadedThreshold) || (bin.Size <= underloadedThreshold) {
+			return bin
+		}
+	}
+
+	return nil
 }

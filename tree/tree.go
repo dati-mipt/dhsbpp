@@ -3,63 +3,61 @@ package tree
 import (
 	"errors"
 	"fmt"
-	"github.com/dati-mipt/dhsbpp/hierarchy"
 )
 
 type Node struct {
 	Name     string
+	Parent   *Node
 	Children []*Node
-	NodeSize float64
-	TreeSize float64
 }
 
-func NewTree(hierarchy *hierarchy.Hierarchy) (*Node, error) {
-	root, nodeName := buildTree(hierarchy.TenantToParent)
-	ok := validateTree(root, nodeName)
+func NewTree(childToParent map[string]string) (*Node, error) {
+	var root = buildTree(childToParent)
+	var ok = ValidateTree(root)
 	if !ok {
 		return nil, errors.New("tree : tree is not valid")
 	}
 
-	const initDays = 30
-
-	SetInitialNodeSize(hierarchy.TasksPerDay, nodeName, initDays)
-	FindTreeSize(root)
-
 	return root, nil
 }
 
-func buildTree(tenantsToParent map[string]string) (*Node, map[string]*Node) {
-	var nodeName = make(map[string]*Node)
+func buildTree(tenantsToParent map[string]string) *Node {
+	var nameToNote = make(map[string]*Node)
 	var root *Node
-	var i = 0
 	for key, value := range tenantsToParent {
 		childName, parentName := key, value
 
-		parentNode, ok := nodeName[parentName]
+		_, ok := nameToNote[parentName]
 		if !ok {
-			parentNode = &Node{Name: parentName}
-			nodeName[parentName] = parentNode
+			nameToNote[parentName] = &Node{Name: parentName}
 		}
-		childNode, ok := nodeName[childName]
+		_, ok = nameToNote[childName]
 		if !ok {
-			childNode = &Node{Name: childName}
-			nodeName[childName] = childNode
+			nameToNote[childName] = &Node{Name: childName}
 		}
 
 		if childName == parentName { // root case
-			root = childNode
+			root = nameToNote[childName]
 		} else {
-			parentNode.Children = append(parentNode.Children, childNode)
+			nameToNote[childName].Parent = nameToNote[parentName]
+
+			nameToNote[parentName].Children = append(nameToNote[parentName].Children,
+				nameToNote[childName])
 		}
-		i++
 	}
 
-	return root, nodeName
+	return root
 }
 
-func validateTree(root *Node, nodeName map[string]*Node) bool {
+func ValidateTree(root *Node) bool {
 	visited := make(map[*Node]bool)
-	for _, node := range nodeName {
+	var allNodes, err = root.AllNodes()
+	if err != nil {
+		fmt.Println(err)
+		return false
+	}
+
+	for _, node := range allNodes {
 		visited[node] = false
 	}
 
@@ -71,14 +69,12 @@ func validateTree(root *Node, nodeName map[string]*Node) bool {
 			allVisited = false
 		}
 	}
-	fmt.Println(acyclic, allVisited)
 
 	return acyclic && allVisited
 }
 
 func isAcyclicDFS(node *Node, visited map[*Node]bool) bool {
 	if visited[node] == true {
-		fmt.Println(node.Name)
 		return false
 	}
 
@@ -93,47 +89,28 @@ func isAcyclicDFS(node *Node, visited map[*Node]bool) bool {
 	return true
 }
 
-func SetInitialNodeSize(tasksPerDay []map[string]float64,
-	nodeName map[string]*Node, initDays int) {
-
-	for i, dayChange := range tasksPerDay {
-		if i >= initDays {
-			break
-		}
-
-		for name, tasks := range dayChange {
-			var node = nodeName[name]
-			node.NodeSize += tasks
-		}
+// return slice of all nodes
+func (node *Node) AllNodes() ([]*Node, error) { // []Node or []*Node?
+	if !node.isRoot() {
+		return nil, errors.New("tree : need root")
 	}
+
+	var allNodes []*Node
+	allNodes = node.allNodesFunc(allNodes)
+
+	return allNodes, nil
 }
 
-func FindTreeSize(node *Node) float64 {
-	node.TreeSize += node.NodeSize
-	for _, ch := range node.Children {
-		node.TreeSize += FindTreeSize(ch)
+func (node *Node) allNodesFunc(allNodes []*Node) []*Node {
+	allNodes = append(allNodes, node)
+
+	for _, child := range node.Children {
+		allNodes = child.allNodesFunc(allNodes)
 	}
 
-	return node.TreeSize
+	return allNodes
 }
 
-func (node *Node) Separate() []*Node {
-	separate := make([]*Node, 0, len(node.Children)+1)
-	for _, ch := range node.Children {
-		separate = append(separate, ch)
-	}
-
-	node.Children = nil
-	node.TreeSize = node.NodeSize
-	separate = append(separate, node)
-
-	return separate
-}
-
-func (node *Node) Unite(children []*Node) {
-	node.Children = children
-
-	for _, ch := range node.Children {
-		node.TreeSize += ch.TreeSize
-	}
+func (node *Node) isRoot() bool {
+	return node.Parent == nil
 }

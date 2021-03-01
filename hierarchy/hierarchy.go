@@ -10,21 +10,27 @@ import (
 )
 
 type Hierarchy struct {
-	TenantToParent map[string]string
-	TasksPerDay    []map[string]float64
+	ChildToParent map[string]string // child name --> parent name
+
+	TasksPerDay []map[string]int64 // Element of slice representing change of tree per day.
+	// Key of map is tenant name.
+	// Value of map is the number
+	// of added entities by this tenant per day.
 }
 
 func NewHierarchy(csvNodes string, csvTpd string) *Hierarchy {
-	var newHierarchy = Hierarchy{readNodes(csvNodes),
-		readCsv(csvTpd)}
+	var newHierarchy Hierarchy
+
+	newHierarchy.ChildToParent = readTreeNodes(csvNodes)
+	newHierarchy.TasksPerDay = readTasksPerDay(csvTpd)
 
 	return &newHierarchy
 }
 
-func readNodes(csvNodes string) map[string]string {
+func readTreeNodes(csvNodes string) map[string]string {
 	var r = NewCsvReader(csvNodes)
 
-	var tenantsToParent = make(map[string]string)
+	var childToParent = make(map[string]string)
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -33,16 +39,16 @@ func readNodes(csvNodes string) map[string]string {
 		if err != nil {
 			log.Fatal(err)
 		}
-		childUuid, parentsUuid := record[0], record[1]
+		childName, parentsName := record[0], record[1]
 
-		tenantsToParent[childUuid] = parentsUuid
+		childToParent[childName] = parentsName
 	}
-	return tenantsToParent
+	return childToParent
 }
 
-func readCsv(csvTpd string) []map[string]float64 {
+func readTasksPerDay(csvTpd string) []map[string]int64 {
 	var r = NewCsvReader(csvTpd)
-	var tasksPerDay = make([]map[string]float64, 0)
+	var tasksPerDay = make([]map[string]int64, 0)
 
 	var lastDate string
 	for {
@@ -54,13 +60,13 @@ func readCsv(csvTpd string) []map[string]float64 {
 			log.Fatal(err)
 		}
 		var tenantUuid, date = record[0], record[1]
-		createdTasks, err := strconv.ParseFloat(record[2], 64)
+		createdTasks, err := strconv.ParseInt(record[2], 10, 64)
 		if err != nil {
 			fmt.Println(err)
 		}
 
 		if date != lastDate {
-			tasksPerDay = append(tasksPerDay, make(map[string]float64))
+			tasksPerDay = append(tasksPerDay, make(map[string]int64))
 		}
 		tasksPerDay[len(tasksPerDay)-1][tenantUuid] += createdTasks
 
