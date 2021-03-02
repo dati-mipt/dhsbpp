@@ -9,7 +9,7 @@ import (
 )
 
 type DotNode struct {
-	idx int
+	BinIndex int
 
 	Children []*DotNode
 	Parent   *DotNode
@@ -26,7 +26,7 @@ func NewDotTree(bins []*packing.Bin) *DotNode {
 
 		for rootNode := range rootNodes {
 			var pNodes = findPartitionNodesOfDotNode(bins[idx].PartNodes, rootNode)
-			var dotNode = DotNode{idx: bins[idx].Index, pRoot: rootNode, pNodes: pNodes}
+			var dotNode = DotNode{BinIndex: bins[idx].Index, pRoot: rootNode, pNodes: pNodes}
 			unconnectedDotNodes[&dotNode] = true
 		}
 	}
@@ -119,12 +119,8 @@ func DrawBinTreeDot(binTree *DotNode, dotFileName string) error {
 }
 
 var m = map[int]string{
-	1: "cadetblue1",
-	2: "darkorchid1",
-	3: "gold1",
-	4: "olivedrab2",
-	5: "violetred1",
-	6: "black",
+	1: "cadetblue1", 2: "darkorchid1", 3: "gold1", 4: "olivedrab2", 5: "violetred1", 6: "antiquewhite1",
+	7: "coral", 8: "gray40", 9: "plum1", 10: "aquamarine4",
 }
 
 func drawNodeDot(binNode *DotNode, file *os.File) error {
@@ -132,8 +128,8 @@ func drawNodeDot(binNode *DotNode, file *os.File) error {
 		"bin index = %v\n"+
 		"number of nodes = %v\n"+
 		"size = %v\","+
-		"fillcolor=\"%v\"];\n", binNode, binNode.idx, len(binNode.pNodes),
-		calculateSizeOfBinNode(binNode), m[binNode.idx])
+		"fillcolor=\"%v\"];\n", binNode, binNode.BinIndex, len(binNode.pNodes),
+		calculateSizeOfBinNode(binNode), m[binNode.BinIndex])
 
 	if err != nil {
 		return err

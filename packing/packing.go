@@ -116,9 +116,8 @@ func findBinForFit(bins []*Bin, pNode *tree.PartitionNode) *Bin {
 	return nil
 }
 
-func DynamicalHierarchicalFirstFitDecreasing(bins *[]*Bin, tasksPerDay []map[string]int64,
-	nameToPartNode map[string]*tree.PartitionNode) { // global constants?
-
+func FindBinForRebalancing(bins *[]*Bin, tasksPerDay []map[string]int64,
+	nameToPartNode map[string]*tree.PartitionNode) *Bin {
 	var loadedBin *Bin
 	for i := InitDays; i < len(tasksPerDay) && loadedBin == nil; i++ {
 		updateSizeInOneTimeInterval(*bins, tasksPerDay[i], nameToPartNode, true)           //Add
@@ -127,17 +126,24 @@ func DynamicalHierarchicalFirstFitDecreasing(bins *[]*Bin, tasksPerDay []map[str
 		loadedBin = findOverOrUnderloadedBin(*bins)
 	}
 
-	if loadedBin != nil {
-		var untiedChildren = untieChildNodesOfBinFromOtherBins(loadedBin)
-		var rootNodesOfBin = loadedBin.MakeRootNodesOfBin()
-		loadedBin.freeBin()
+	return loadedBin
+}
 
-		for rootNode := range rootNodesOfBin {
-			HierarchicalFirstFitDecreasing(rootNode, bins)
-		}
+func DynamicalHierarchicalFirstFitDecreasing(loadedBin *Bin, bins *[]*Bin) int64 {
+	var oldSize = loadedBin.Size
+	var untiedChildren = untieChildNodesOfBinFromOtherBins(loadedBin)
+	var rootNodesOfBin = loadedBin.MakeRootNodesOfBin()
+	loadedBin.freeBin()
 
-		tieChildNodesToOtherBins(untiedChildren)
+	for rootNode := range rootNodesOfBin {
+		HierarchicalFirstFitDecreasing(rootNode, bins)
 	}
+
+	tieChildNodesToOtherBins(untiedChildren)
+
+	var migrationSize = oldSize - loadedBin.Size
+
+	return migrationSize
 }
 
 func untieChildNodesOfBinFromOtherBins(bin *Bin) map[*tree.PartitionNode][]*tree.PartitionNode {

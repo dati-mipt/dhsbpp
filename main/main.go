@@ -30,18 +30,28 @@ func main() {
 	packing.PreprocessPartitionTree(pRoot)
 	packing.HierarchicalFirstFitDecreasing(pRoot, &bins)
 
-	var rootDotNodeBefore = vizualize.NewDotTree(bins)
-	err = vizualize.DrawBinTreeDot(rootDotNodeBefore, "DotTreeBefore.dot")
-	// dot -Tpng DotTreeBefore.dot -o DotTreeBefore.png
+	var firstDistribution = vizualize.NewDotTree(bins)
+	err = vizualize.DrawBinTreeDot(firstDistribution, "FirstDistribution.dot")
+	// dot -Tpng FirstDistribution.dot -o FirstDistribution.png
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
 	nameToPartitionNode, _ := pRoot.MapNameToPartitionNode()
-	packing.DynamicalHierarchicalFirstFitDecreasing(&bins, newHierarchy.TasksPerDay, nameToPartitionNode)
+	var loadedBin = packing.FindBinForRebalancing(&bins, newHierarchy.TasksPerDay, nameToPartitionNode)
 
-	var rootDotNodeAfter = vizualize.NewDotTree(bins)
-	err = vizualize.DrawBinTreeDot(rootDotNodeAfter, "DotTreeAfter.dot")
-	// dot -Tpng DotTreeAfter.dot -o DotTreeAfter.png
+	var secondDistribution = vizualize.NewDotTree(bins)
+	err = vizualize.DrawBinTreeDot(secondDistribution, "SecondDistribution.dot")
+	// dot -Tpng SecondDistribution.dot -o SecondDistribution.png
+
+	if loadedBin != nil {
+		var migrationSize = packing.DynamicalHierarchicalFirstFitDecreasing(loadedBin, &bins)
+		fmt.Println("Bin Index:", loadedBin.Index)
+		fmt.Println("Migration Size:", migrationSize)
+		var thirdDistribution = vizualize.NewDotTree(bins)
+		err = vizualize.DrawBinTreeDot(thirdDistribution, "ThirdDistribution.dot")
+		// dot -Tpng ThirdDistribution.dot -o ThirdDistribution.png
+	}
+
 }
