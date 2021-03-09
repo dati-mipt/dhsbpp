@@ -23,27 +23,26 @@ func NewTree(childToParent map[string]string) (*Node, error) {
 }
 
 func buildTree(tenantsToParent map[string]string) *Node {
-	var nameToNote = make(map[string]*Node)
+	var nameToNode = make(map[string]*Node)
 	var root *Node
-	for key, value := range tenantsToParent {
-		childName, parentName := key, value
+	for childName, parentName := range tenantsToParent {
 
-		_, ok := nameToNote[parentName]
+		_, ok := nameToNode[parentName]
 		if !ok {
-			nameToNote[parentName] = &Node{Name: parentName}
+			nameToNode[parentName] = &Node{Name: parentName}
 		}
-		_, ok = nameToNote[childName]
+		_, ok = nameToNode[childName]
 		if !ok {
-			nameToNote[childName] = &Node{Name: childName}
+			nameToNode[childName] = &Node{Name: childName}
 		}
 
 		if childName == parentName { // root case
-			root = nameToNote[childName]
+			root = nameToNode[childName]
 		} else {
-			nameToNote[childName].Parent = nameToNote[parentName]
+			nameToNode[childName].Parent = nameToNode[parentName]
 
-			nameToNote[parentName].Children = append(nameToNote[parentName].Children,
-				nameToNote[childName])
+			nameToNode[parentName].Children = append(nameToNode[parentName].Children,
+				nameToNode[childName])
 		}
 	}
 
@@ -51,7 +50,7 @@ func buildTree(tenantsToParent map[string]string) *Node {
 }
 
 func ValidateTree(root *Node) bool {
-	visited := make(map[*Node]bool)
+	var visited = make(map[*Node]bool)
 	var allNodes, err = root.AllNodes()
 	if err != nil {
 		fmt.Println(err)
@@ -211,7 +210,7 @@ func (pNode *PartitionNode) SetInitialSize(tasksPerDay []map[string]int64, initD
 		return err
 	}
 
-	for i := 0; i < initDays; i++ {
+	for i := 0; i < initDays && i < len(tasksPerDay); i++ {
 		for name, tasks := range tasksPerDay[i] {
 			nameToPartNode[name].AddToNodeSize(tasks)
 		}
@@ -220,12 +219,12 @@ func (pNode *PartitionNode) SetInitialSize(tasksPerDay []map[string]int64, initD
 	return nil
 }
 
-func (pNode *PartitionNode) Separate() []*PartitionNode {
-	separate := make([]*PartitionNode, 0, len(pNode.Children)+1)
+func (pNode *PartitionNode) SeparateRoot() ([]*PartitionNode, []*PartitionNode) {
+	var separate = make([]*PartitionNode, 0, len(pNode.Children)+1)
 	for _, ch := range pNode.Children {
 		separate = append(separate, ch)
 	}
-
+	var forUnite = pNode.Children
 	pNode.Children = nil
 	pNode.SubTreeSize = pNode.NodeSize
 	separate = append(separate, pNode)
@@ -234,13 +233,48 @@ func (pNode *PartitionNode) Separate() []*PartitionNode {
 		return separate[i].SubTreeSize > separate[j].SubTreeSize
 	})
 
-	return separate
+	return separate, forUnite
 }
 
-func (pNode *PartitionNode) Unite(children []*PartitionNode) {
+func (pNode *PartitionNode) UniteRoot(children []*PartitionNode) {
 	pNode.Children = children
 
 	for _, ch := range pNode.Children {
 		pNode.SubTreeSize += ch.SubTreeSize
+	}
+}
+
+func (pNode *PartitionNode) SeparateMaxChild() ([]*PartitionNode, []*PartitionNode) {
+
+	var maxChild *PartitionNode
+	var maxSize int64 = 0
+	for _, child := range pNode.Children {
+		if child.SubTreeSize >= maxSize {
+			maxSize = child.SubTreeSize
+			maxChild = child
+		}
+	}
+
+	if maxChild == nil {
+		fmt.Println("something wrong")
+		return nil, nil
+	}
+
+	pNode.RemoveChild(maxChild)
+
+	var separate = make([]*PartitionNode, 0)
+	if maxChild.SubTreeSize > pNode.SubTreeSize {
+		separate = append(separate, maxChild, pNode)
+	} else {
+		separate = append(separate, pNode, maxChild)
+	}
+	var forUnite = make([]*PartitionNode, 0, 1)
+	forUnite = append(forUnite, maxChild)
+
+	return separate, forUnite
+}
+func (pNode *PartitionNode) UniteMaxChild(children []*PartitionNode) {
+	for _, child := range children {
+		pNode.AppendChild(child)
 	}
 }

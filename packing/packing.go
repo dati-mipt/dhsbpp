@@ -2,6 +2,7 @@ package packing
 
 import (
 	"github.com/dati-mipt/dhsbpp/tree"
+	"sort"
 )
 
 const (
@@ -9,7 +10,10 @@ const (
 	AllocationFactor  = 60
 	ReallocationDelta = 20
 	InitDays          = 100
-	Volume            = MaxCapacity * AllocationFactor / 100
+
+	Volume             = MaxCapacity * AllocationFactor / 100
+	OverloadThreshold  = MaxCapacity * (AllocationFactor + ReallocationDelta) / 100
+	UnderloadThreshold = MaxCapacity * (AllocationFactor - ReallocationDelta) / 100
 )
 
 type Bin struct {
@@ -34,7 +38,7 @@ func (bin *Bin) AddToBinSize(pNode *tree.PartitionNode, tasks int64) {
 	bin.Size += tasks
 }
 
-func (bin *Bin) MakeRootNodesOfBin() map[*tree.PartitionNode]bool {
+func (bin *Bin) MakeMapRootNodesOfBin() map[*tree.PartitionNode]bool {
 	var tmpPartNodes = make(map[*tree.PartitionNode]bool)
 	for node := range bin.PartNodes {
 		tmpPartNodes[node] = true
@@ -47,6 +51,15 @@ func (bin *Bin) MakeRootNodesOfBin() map[*tree.PartitionNode]bool {
 	}
 
 	return tmpPartNodes
+}
+
+func (bin *Bin) MakeSliceRootNodesOfBin() []*tree.PartitionNode {
+	var sliceRootNodesOfBin = make([]*tree.PartitionNode, 0)
+	for rootNode := range bin.MakeMapRootNodesOfBin() {
+		sliceRootNodesOfBin = append(sliceRootNodesOfBin, rootNode)
+	}
+
+	return sliceRootNodesOfBin
 }
 
 func (bin *Bin) AddSubTree(pNode *tree.PartitionNode) {
@@ -83,27 +96,30 @@ func PreprocessPartitionTree(pRoot *tree.PartitionNode) {
 	}
 }
 
-func HierarchicalFirstFitDecreasing(pNode *tree.PartitionNode, bins *[]*Bin) {
+func HierarchicalFirstFitDecreasing(pNode *tree.PartitionNode, bins []*Bin) []*Bin {
 	if pNode.SubTreeSize <= Volume {
-		var bin = findBinForFit(*bins, pNode)
+		var bin = findBinForFit(bins, pNode)
 
 		if bin != nil {
 			bin.AddSubTree(pNode)
 		} else {
-			bin := NewBin(len(*bins) + 1)
+			bin := NewBin(len(bins) + 1)
 			bin.AddSubTree(pNode)
-			*bins = append(*bins, bin)
+			bins = append(bins, bin)
 		}
 	} else {
-		var children = pNode.Children
-		var separate = pNode.Separate()
+		//	var separate, forUnite = pNode.SeparateMaxChild()
+		var separate, forUnite = pNode.SeparateRoot()
 
 		for _, node := range separate {
-			HierarchicalFirstFitDecreasing(node, bins)
+			bins = HierarchicalFirstFitDecreasing(node, bins)
 		}
 
-		pNode.Unite(children)
+		//	pNode.UniteMaxChild(forUnite)
+		pNode.UniteRoot(forUnite)
 	}
+
+	return bins
 }
 
 func findBinForFit(bins []*Bin, pNode *tree.PartitionNode) *Bin {
@@ -116,34 +132,46 @@ func findBinForFit(bins []*Bin, pNode *tree.PartitionNode) *Bin {
 	return nil
 }
 
-func FindBinForRebalancing(bins *[]*Bin, tasksPerDay []map[string]int64,
+func FindBinForRebalancing(bins []*Bin, tasksPerDay []map[string]int64,
 	nameToPartNode map[string]*tree.PartitionNode) *Bin {
+
+	var initiallyUnderloadedBins = make(map[*Bin]bool)
+	for _, bin := range bins {
+		initiallyUnderloadedBins[bin] = bin.Size <= UnderloadThreshold
+	}
+
 	var loadedBin *Bin
 	for i := InitDays; i < len(tasksPerDay) && loadedBin == nil; i++ {
-		updateSizeInOneTimeInterval(*bins, tasksPerDay[i], nameToPartNode, true)           //Add
-		updateSizeInOneTimeInterval(*bins, tasksPerDay[i-InitDays], nameToPartNode, false) //Sub
 
-		loadedBin = findOverOrUnderloadedBin(*bins)
+		updateSizeInOneTimeInterval(bins, tasksPerDay[i], nameToPartNode, true)           //Add
+		updateSizeInOneTimeInterval(bins, tasksPerDay[i-InitDays], nameToPartNode, false) //Sub
+
+		loadedBin = findOverOrUnderloadedBin(bins, initiallyUnderloadedBins)
 	}
 
 	return loadedBin
 }
 
-func DynamicalHierarchicalFirstFitDecreasing(loadedBin *Bin, bins *[]*Bin) int64 {
+func DynamicalHierarchicalFirstFitDecreasing(loadedBin *Bin, bins []*Bin) ([]*Bin, int64) {
 	var oldSize = loadedBin.Size
 	var untiedChildren = untieChildNodesOfBinFromOtherBins(loadedBin)
-	var rootNodesOfBin = loadedBin.MakeRootNodesOfBin()
+	var sliceRootNodesOfBin = loadedBin.MakeSliceRootNodesOfBin()
 	loadedBin.freeBin()
 
-	for rootNode := range rootNodesOfBin {
-		HierarchicalFirstFitDecreasing(rootNode, bins)
+	sort.Slice(sliceRootNodesOfBin, func(i, j int) bool {
+		return sliceRootNodesOfBin[i].SubTreeSize > sliceRootNodesOfBin[j].SubTreeSize
+	})
+
+	for _, rootNode := range sliceRootNodesOfBin {
+		PreprocessPartitionTree(rootNode) // think later
+		bins = HierarchicalFirstFitDecreasing(rootNode, bins)
 	}
 
 	tieChildNodesToOtherBins(untiedChildren)
 
 	var migrationSize = oldSize - loadedBin.Size
 
-	return migrationSize
+	return bins, migrationSize
 }
 
 func untieChildNodesOfBinFromOtherBins(bin *Bin) map[*tree.PartitionNode][]*tree.PartitionNode {
@@ -188,11 +216,10 @@ func updateSizeInOneTimeInterval(bins []*Bin, tasksPerOneDay map[string]int64,
 	}
 }
 
-func findOverOrUnderloadedBin(bins []*Bin) *Bin {
+func findOverOrUnderloadedBin(bins []*Bin, initiallyUnderloadedBins map[*Bin]bool) *Bin {
 	for _, bin := range bins {
-		var overloadedThreshold int64 = MaxCapacity * (AllocationFactor + ReallocationDelta) / 100
-		var underloadedThreshold int64 = MaxCapacity * (AllocationFactor - ReallocationDelta) / 100
-		if (bin.Size >= overloadedThreshold) || (bin.Size <= underloadedThreshold) {
+		if (bin.Size >= OverloadThreshold) ||
+			(bin.Size <= UnderloadThreshold && !initiallyUnderloadedBins[bin]) {
 			return bin
 		}
 	}
