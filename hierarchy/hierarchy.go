@@ -28,7 +28,7 @@ func NewHierarchy(csvNodes string, csvTpd string) *Hierarchy {
 }
 
 func readTreeNodes(csvNodes string) map[string]string {
-	var r = NewCsvReader(csvNodes)
+	var r = newCsvReader(csvNodes)
 
 	var childToParent = make(map[string]string)
 	for {
@@ -47,7 +47,7 @@ func readTreeNodes(csvNodes string) map[string]string {
 }
 
 func readTasksPerDay(csvTpd string) []map[string]int64 {
-	var r = NewCsvReader(csvTpd)
+	var r = newCsvReader(csvTpd)
 	var tasksPerDay = make([]map[string]int64, 0)
 
 	var lastDate string
@@ -75,7 +75,7 @@ func readTasksPerDay(csvTpd string) []map[string]int64 {
 	return tasksPerDay
 }
 
-func NewCsvReader(filepath string) *csv.Reader {
+func newCsvReader(filepath string) *csv.Reader {
 	csvFile, err := os.Open(filepath)
 	if err != nil {
 		log.Fatalln("Couldn't open the csv file", err)
