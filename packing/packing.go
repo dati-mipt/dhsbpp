@@ -1,20 +1,28 @@
 package packing
 
 import (
+	"fmt"
 	"github.com/dati-mipt/dhsbpp/tree"
 	"sort"
 )
 
-const (
-	MaxCapacity       = 250
-	AllocationFactor  = 60
-	ReallocationDelta = 20
-	InitDays          = 100
+var AlgorithmPackingFunc func(*tree.PartitionNode, []*Bin) []*Bin
+var SeparateFunc func(pNode *tree.PartitionNode) ([]*tree.PartitionNode, []*tree.PartitionNode)
 
-	Volume             = MaxCapacity * AllocationFactor / 100
-	OverloadThreshold  = MaxCapacity * (AllocationFactor + ReallocationDelta) / 100
+var AllocationFactor int64 = 60  // default value
+var ReallocationDelta int64 = 20 // default value
+var MaxCapacity int64
+var InitEpochs int
+
+var Volume int64
+var OverloadThreshold int64
+var UnderloadThreshold int64
+
+func UpdParams() {
+	Volume = MaxCapacity * AllocationFactor / 100
+	OverloadThreshold = MaxCapacity * (AllocationFactor + ReallocationDelta) / 100
 	UnderloadThreshold = MaxCapacity * (AllocationFactor - ReallocationDelta) / 100
-)
+}
 
 type Bin struct {
 	Index     int
@@ -103,20 +111,37 @@ func HierarchicalFirstFitDecreasing(pNode *tree.PartitionNode, bins []*Bin) []*B
 		if bin != nil {
 			bin.AddSubTree(pNode)
 		} else {
-			bin := NewBin(len(bins) + 1)
+			var bin = NewBin(len(bins) + 1)
 			bin.AddSubTree(pNode)
 			bins = append(bins, bin)
 		}
 	} else {
 		//	var separate, forUnite = pNode.SeparateMaxChild()
-		var separate, forUnite = pNode.SeparateRoot()
+		var separate, forUnite = SeparateFunc(pNode)
 
 		for _, node := range separate {
 			bins = HierarchicalFirstFitDecreasing(node, bins)
 		}
 
-		//	pNode.UniteMaxChild(forUnite)
-		pNode.UniteRoot(forUnite)
+		Unite(pNode, forUnite)
+	}
+
+	return bins
+}
+
+func HierarchicalGreedyDecreasing(pNode *tree.PartitionNode, bins []*Bin) []*Bin {
+	if pNode.SubTreeSize <= Volume {
+		var bin = NewBin(len(bins) + 1)
+		bin.AddSubTree(pNode)
+		bins = append(bins, bin)
+	} else {
+		var separate, forUnite = SeparateFunc(pNode)
+
+		for _, node := range separate {
+			bins = HierarchicalGreedyDecreasing(node, bins)
+		}
+
+		Unite(pNode, forUnite)
 	}
 
 	return bins
@@ -132,7 +157,7 @@ func findBinForFit(bins []*Bin, pNode *tree.PartitionNode) *Bin {
 	return nil
 }
 
-func FindBinForRebalancing(bins []*Bin, tasksPerDay []map[string]int64,
+func FindBinForRebalancing(bins []*Bin, tasksPerEpoch []map[string]int64,
 	nameToPartNode map[string]*tree.PartitionNode) *Bin {
 
 	var initiallyUnderloadedBins = make(map[*Bin]bool)
@@ -141,10 +166,10 @@ func FindBinForRebalancing(bins []*Bin, tasksPerDay []map[string]int64,
 	}
 
 	var loadedBin *Bin
-	for i := InitDays; i < len(tasksPerDay) && loadedBin == nil; i++ {
+	for i := InitEpochs; i < len(tasksPerEpoch) && loadedBin == nil; i++ {
 
-		updateSizeInOneTimeInterval(bins, tasksPerDay[i], nameToPartNode, true)           //Add
-		updateSizeInOneTimeInterval(bins, tasksPerDay[i-InitDays], nameToPartNode, false) //Sub
+		updateSizeInOneTimeInterval(bins, tasksPerEpoch[i], nameToPartNode, true)             //Add
+		updateSizeInOneTimeInterval(bins, tasksPerEpoch[i-InitEpochs], nameToPartNode, false) //Sub
 
 		loadedBin = findOverOrUnderloadedBin(bins, initiallyUnderloadedBins)
 	}
@@ -152,7 +177,7 @@ func FindBinForRebalancing(bins []*Bin, tasksPerDay []map[string]int64,
 	return loadedBin
 }
 
-func DynamicalHierarchicalFirstFitDecreasing(loadedBin *Bin, bins []*Bin) ([]*Bin, int64) {
+func DynamicalAlgorithmPackingFunc(loadedBin *Bin, bins []*Bin) ([]*Bin, int64) {
 	var oldSize = loadedBin.Size
 	var untiedChildren = untieChildNodesOfBinFromOtherBins(loadedBin)
 	var sliceRootNodesOfBin = loadedBin.MakeSliceRootNodesOfBin()
@@ -164,11 +189,12 @@ func DynamicalHierarchicalFirstFitDecreasing(loadedBin *Bin, bins []*Bin) ([]*Bi
 
 	for _, rootNode := range sliceRootNodesOfBin {
 		PreprocessPartitionTree(rootNode) // think later
-		bins = HierarchicalFirstFitDecreasing(rootNode, bins)
+		bins = AlgorithmPackingFunc(rootNode, bins)
 	}
 
 	tieChildNodesToOtherBins(untiedChildren)
 
+	//fmt.Println(oldSize, loadedBin.Size)
 	var migrationSize = oldSize - loadedBin.Size
 
 	return bins, migrationSize
@@ -180,12 +206,18 @@ func untieChildNodesOfBinFromOtherBins(bin *Bin) map[*tree.PartitionNode][]*tree
 	for pNode := range bin.PartNodes {
 		for _, child := range pNode.Children {
 			if ok := bin.PartNodes[child]; !ok {
-				pNode.RemoveChild(child)
 				untiedChildren[pNode] = append(untiedChildren[pNode], child)
 			}
 		}
 	}
-
+	var sum int64
+	for pNode, children := range untiedChildren {
+		for _, child := range children {
+			pNode.RemoveChild(child) // mistake!!!!!
+			sum += child.SubTreeSize
+		}
+	}
+	fmt.Println(sum)
 	return untiedChildren
 }
 
@@ -197,10 +229,10 @@ func tieChildNodesToOtherBins(untiedChildren map[*tree.PartitionNode][]*tree.Par
 	}
 }
 
-func updateSizeInOneTimeInterval(bins []*Bin, tasksPerOneDay map[string]int64,
+func updateSizeInOneTimeInterval(bins []*Bin, tasksPerOneEpoch map[string]int64,
 	nameToPartNode map[string]*tree.PartitionNode, isPlus bool) {
 
-	for name, tasks := range tasksPerOneDay { //Add
+	for name, tasks := range tasksPerOneEpoch { //Add
 		var pNode = nameToPartNode[name]
 
 		if !isPlus {
@@ -225,4 +257,64 @@ func findOverOrUnderloadedBin(bins []*Bin, initiallyUnderloadedBins map[*Bin]boo
 	}
 
 	return nil
+}
+
+func SeparateRoot(pNode *tree.PartitionNode) ([]*tree.PartitionNode, []*tree.PartitionNode) {
+	var separate = make([]*tree.PartitionNode, 0, len(pNode.Children)+1)
+	for _, ch := range pNode.Children {
+		separate = append(separate, ch)
+	}
+	var forUnite = pNode.Children
+	pNode.Children = nil
+	pNode.SubTreeSize = pNode.NodeSize
+	separate = append(separate, pNode)
+
+	sort.Slice(separate, func(i, j int) bool {
+		return separate[i].SubTreeSize > separate[j].SubTreeSize
+	})
+
+	return separate, forUnite
+}
+
+func SeparateMaxChild(pNode *tree.PartitionNode) ([]*tree.PartitionNode, []*tree.PartitionNode) {
+	var maxChild *tree.PartitionNode
+	var maxSize int64 = 0
+	for _, child := range pNode.Children {
+		if child.SubTreeSize >= maxSize {
+			maxSize = child.SubTreeSize
+			maxChild = child
+		}
+	}
+
+	if maxChild == nil {
+		fmt.Println("something wrong")
+		return nil, nil
+	}
+
+	// pNode.RemoveChild(maxChild)  ?? Debug
+	for idx := range pNode.Children { // Debug
+		if pNode.Children[idx] == maxChild {
+			pNode.Children = append(pNode.Children[:idx], pNode.Children[idx+1:]...) // mistake
+			break
+		}
+	}
+	pNode.SubTreeSize -= maxChild.SubTreeSize
+
+	var separate = make([]*tree.PartitionNode, 0)
+	if maxChild.SubTreeSize > pNode.SubTreeSize {
+		separate = append(separate, maxChild, pNode)
+	} else {
+		separate = append(separate, pNode, maxChild)
+	}
+	var forUnite = make([]*tree.PartitionNode, 0, 1)
+	forUnite = append(forUnite, maxChild)
+
+	return separate, forUnite
+}
+
+func Unite(pNode *tree.PartitionNode, children []*tree.PartitionNode) {
+	for _, child := range children {
+		pNode.Children = append(pNode.Children, child)
+		pNode.SubTreeSize += child.SubTreeSize
+	}
 }
