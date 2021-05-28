@@ -2,7 +2,6 @@ package hierarchy
 
 import (
 	"encoding/csv"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -12,23 +11,23 @@ import (
 type Hierarchy struct {
 	ChildToParent map[string]string // child name --> parent name
 
-	TasksPerDay []map[string]int64 // Element of slice representing change of tree per day.
-	// Key of map is tenant name.
+	WeightsPerEpoch []map[string]int64 // Element of slice representing change of tree per epoch.
+	// Key of map is node name.
 	// Value of map is the number
-	// of added entities by this tenant per day.
+	// of weight by this node per epoch.
 }
 
-func NewHierarchy(csvNodes string, csvTpd string) *Hierarchy {
+func NewHierarchy(csvChildParent string, csvWeightsPerEpoch string) *Hierarchy {
 	var newHierarchy Hierarchy
 
-	newHierarchy.ChildToParent = readTreeNodes(csvNodes)
-	newHierarchy.TasksPerDay = readTasksPerDay(csvTpd)
+	newHierarchy.ChildToParent = readTreeNodes(csvChildParent)
+	newHierarchy.WeightsPerEpoch = readWeightsPerEpoch(csvWeightsPerEpoch)
 
 	return &newHierarchy
 }
 
-func readTreeNodes(csvNodes string) map[string]string {
-	var r = newCsvReader(csvNodes)
+func readTreeNodes(csvChildParent string) map[string]string {
+	var r = newCsvReader(csvChildParent)
 
 	var childToParent = make(map[string]string)
 	for {
@@ -39,18 +38,17 @@ func readTreeNodes(csvNodes string) map[string]string {
 		if err != nil {
 			log.Fatal(err)
 		}
-		childName, parentsName := record[0], record[1]
+		childName, parentName := record[0], record[1]
 
-		childToParent[childName] = parentsName
+		childToParent[childName] = parentName
 	}
 	return childToParent
 }
 
-func readTasksPerDay(csvTpd string) []map[string]int64 {
-	var r = newCsvReader(csvTpd)
-	var tasksPerDay = make([]map[string]int64, 0)
+func readWeightsPerEpoch(csvWeightPerEpoch string) []map[string]int64 {
+	var r = newCsvReader(csvWeightPerEpoch)
+	var weightsPerEpoch = make([]map[string]int64, 0)
 
-	var lastDate string
 	for {
 		record, err := r.Read()
 		if err == io.EOF {
@@ -59,20 +57,17 @@ func readTasksPerDay(csvTpd string) []map[string]int64 {
 		if err != nil {
 			log.Fatal(err)
 		}
-		var nodeName, date = record[0], record[1]
-		createdTasks, err := strconv.ParseInt(record[2], 10, 64)
-		if err != nil {
-			fmt.Println(err)
+		var nodeName = record[0]
+		var epoch, _ = strconv.Atoi(record[1])
+		var weight, _ = strconv.ParseInt(record[2], 10, 64)
+
+		if epoch == len(weightsPerEpoch) {
+			weightsPerEpoch = append(weightsPerEpoch, make(map[string]int64))
 		}
 
-		if date != lastDate {
-			tasksPerDay = append(tasksPerDay, make(map[string]int64))
-		}
-		tasksPerDay[len(tasksPerDay)-1][nodeName] += createdTasks
-
-		lastDate = date
+		weightsPerEpoch[epoch][nodeName] += weight
 	}
-	return tasksPerDay
+	return weightsPerEpoch
 }
 
 func newCsvReader(filepath string) *csv.Reader {

@@ -3,7 +3,6 @@ package tree
 import (
 	"errors"
 	"fmt"
-	"sort"
 )
 
 type Node struct {
@@ -198,7 +197,7 @@ func (pNode *PartitionNode) AppendChild(child *PartitionNode) {
 	pNode.Children = append(pNode.Children, child)
 }
 
-func (pNode *PartitionNode) SetInitialSize(tasksPerDay []map[string]int64, initDays int) error {
+func (pNode *PartitionNode) SetInitialSize(tasksPerEpoch []map[string]int64, initEpochs int) error {
 	if !pNode.isRoot() {
 		return errors.New("partition tree : need partition root")
 	}
@@ -210,71 +209,11 @@ func (pNode *PartitionNode) SetInitialSize(tasksPerDay []map[string]int64, initD
 		return err
 	}
 
-	for i := 0; i < initDays && i < len(tasksPerDay); i++ {
-		for name, tasks := range tasksPerDay[i] {
+	for i := 0; i < initEpochs && i < len(tasksPerEpoch); i++ {
+		for name, tasks := range tasksPerEpoch[i] {
 			nameToPartNode[name].AddToNodeSize(tasks)
 		}
 	}
 
 	return nil
-}
-
-func (pNode *PartitionNode) SeparateRoot() ([]*PartitionNode, []*PartitionNode) {
-	var separate = make([]*PartitionNode, 0, len(pNode.Children)+1)
-	for _, ch := range pNode.Children {
-		separate = append(separate, ch)
-	}
-	var forUnite = pNode.Children
-	pNode.Children = nil
-	pNode.SubTreeSize = pNode.NodeSize
-	separate = append(separate, pNode)
-
-	sort.Slice(separate, func(i, j int) bool {
-		return separate[i].SubTreeSize > separate[j].SubTreeSize
-	})
-
-	return separate, forUnite
-}
-
-func (pNode *PartitionNode) UniteRoot(children []*PartitionNode) {
-	pNode.Children = children
-
-	for _, ch := range pNode.Children {
-		pNode.SubTreeSize += ch.SubTreeSize
-	}
-}
-
-func (pNode *PartitionNode) SeparateMaxChild() ([]*PartitionNode, []*PartitionNode) {
-
-	var maxChild *PartitionNode
-	var maxSize int64 = 0
-	for _, child := range pNode.Children {
-		if child.SubTreeSize >= maxSize {
-			maxSize = child.SubTreeSize
-			maxChild = child
-		}
-	}
-
-	if maxChild == nil {
-		fmt.Println("something wrong")
-		return nil, nil
-	}
-
-	pNode.RemoveChild(maxChild)
-
-	var separate = make([]*PartitionNode, 0)
-	if maxChild.SubTreeSize > pNode.SubTreeSize {
-		separate = append(separate, maxChild, pNode)
-	} else {
-		separate = append(separate, pNode, maxChild)
-	}
-	var forUnite = make([]*PartitionNode, 0, 1)
-	forUnite = append(forUnite, maxChild)
-
-	return separate, forUnite
-}
-func (pNode *PartitionNode) UniteMaxChild(children []*PartitionNode) {
-	for _, child := range children {
-		pNode.AppendChild(child)
-	}
 }
